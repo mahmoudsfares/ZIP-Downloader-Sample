@@ -1,15 +1,14 @@
 package com.example.downloadcatalogues;
 
 import androidx.appcompat.app.AppCompatActivity;
-
+import androidx.lifecycle.MutableLiveData;
 import android.app.DownloadManager;
 import android.app.ProgressDialog;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
-import android.widget.TextView;
-
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -19,7 +18,8 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
@@ -27,32 +27,35 @@ import javax.net.ssl.X509TrustManager;
 public class MainActivity extends AppCompatActivity {
 
     private ProgressDialog mProgressDialog;
-    TextView tv;
+    private final MutableLiveData<Integer> progress = new MutableLiveData<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        /*
+        N.B. there's two ways to download:
+        1- IOStream: old way, not recommended
+        2- DownloadManager: currently recommended way
+         */
+
         findViewById(R.id.extrauma_button).setOnClickListener(v -> {
             String urlZipFile = "https://edetailing.minapharm.com/ed/EXT_DNA_GE_1.zip";
 //            downloadWithDownloadManager(urlZipFile, "extrauma");
-            IOStreamDownload mew = new IOStreamDownload();
-            mew.execute(urlZipFile);
+            downloadWithIOStream(urlZipFile, "extrauma");
         });
 
         findViewById(R.id.bonone_button).setOnClickListener(v -> {
             String urlZipFile = "http://edetailing.minapharm.com/ed/BON_ONE25_1.zip";
 //            downloadWithDownloadManager(urlZipFile, "bonone");
-            IOStreamDownload mew = new IOStreamDownload();
-            mew.execute(urlZipFile);
+            downloadWithIOStream(urlZipFile, "bonone");
         });
 
         findViewById(R.id.ophtatrov_button).setOnClickListener(v -> {
             String urlZipFile = "https://edetailing.minapharm.com/ed/Ophtatrov_1.zip";
             downloadWithDownloadManager(urlZipFile, "ophtatrov");
-//            IOStreamDownload mew = new IOStreamDownload();
-//            mew.execute(urlZipFile);
+//            downloadWithIOStream(urlZipFile, "ophtatrov");
         });
     }
 
@@ -79,28 +82,25 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void downloadWithIOStream (String url, String fileName){
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Handler handler = new Handler(Looper.getMainLooper());
 
-    class IOStreamDownload extends AsyncTask<String, String, String> {
+        mProgressDialog = new ProgressDialog(MainActivity.this);
+        mProgressDialog.setMessage("Downloading...");
+        mProgressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+        mProgressDialog.setCancelable(false);
+        mProgressDialog.show();
 
-        @Override
-        protected void onPreExecute() {
-            super.onPreExecute();
-            mProgressDialog = new ProgressDialog(MainActivity.this);
-            mProgressDialog.setMessage("Downloading...");
-            mProgressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-            mProgressDialog.setCancelable(false);
-            mProgressDialog.show();
-        }
+        executor.execute(() -> {
 
-        @Override
-        protected String doInBackground(String... aurl) {
             int count;
 
             try {
-                URL url = new URL(aurl[0]);
+                URL url1 = new URL(url);
                 int lengthOfFile;
                 // https
-                if (aurl[0].contains("https")) {
+                if (url.contains("https")) {
                     //--------------- HANDLE SSLHandshakeException ---------------//
                     try {
                         HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
@@ -116,26 +116,26 @@ public class MainActivity extends AppCompatActivity {
                         e.printStackTrace();
                     }
                     //-----------------------------------------------------------//
-                    HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
+                    HttpsURLConnection connection = (HttpsURLConnection) url1.openConnection();
                     connection.connect();
                     lengthOfFile = connection.getContentLength();
                 }
                 // http
                 else {
-                    URLConnection connection = url.openConnection();
+                    URLConnection connection = url1.openConnection();
                     connection.connect();
                     lengthOfFile = connection.getContentLength();
                 }
 
-                InputStream input = new BufferedInputStream(url.openStream());
-                OutputStream output = new FileOutputStream(getApplicationContext().getExternalFilesDir(null).getAbsolutePath() + "/test/");
+                InputStream input = new BufferedInputStream(url1.openStream());
+                OutputStream output = new FileOutputStream(getApplicationContext().getExternalFilesDir(null).getAbsolutePath() + "/ "+fileName+" /");
 
                 byte[] data = new byte[1024];
                 long total = 0;
 
                 while ((count = input.read(data)) != -1) {
                     total += count;
-                    publishProgress("" + (int) ((total * 100) / lengthOfFile));
+                    progress.postValue((int) ((total * 100) / lengthOfFile));
                     output.write(data, 0, count);
                 }
                 output.close();
@@ -143,18 +143,16 @@ public class MainActivity extends AppCompatActivity {
             }
             catch (Exception e) {
                 e.printStackTrace();
+                mProgressDialog.dismiss();
             }
-            return null;
-        }
+        });
 
-        protected void onProgressUpdate(String... progress) {
-            Log.d("ANDRO_ASYNC", progress[0]);
-            mProgressDialog.setProgress(Integer.parseInt(progress[0]));
-        }
-
-        @Override
-        protected void onPostExecute(String unused) {
-            mProgressDialog.dismiss();
-        }
+        handler.post(() -> {
+            progress.observe(this, progress -> {
+                mProgressDialog.setProgress(progress);
+                if (progress == 100)
+                    mProgressDialog.dismiss();
+            });
+        });
     }
 }
